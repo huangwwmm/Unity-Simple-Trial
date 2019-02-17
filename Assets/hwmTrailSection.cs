@@ -1,7 +1,6 @@
 ﻿using UnityEngine;
 
-[System.Serializable]
-public class hwmTrail3DSection
+public class hwmTrailSection
 {
     public float BirthTime;
     public Vector3 Position;

@@ -1,13 +1,14 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
-using System;
 
 /// <summary>
-/// 当自己实现的条带段上希望记录额外数据时，可以利用C#的泛型传入一个mfTrail3DSection的子类，在其中添加自己需要的变量。
+/// TODO 这个类应该是个abstract类，由子类实现各种效果的Trail
 /// </summary>
-/// <typeparam name="SectionT"></typeparam>
-public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTrail3DSection, new()
+public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTrailSection, new()
 {
+    /// <summary>
+    /// 渲染这个Trail的相机
+    /// </summary>
     public Camera RendererCamera;
 
     /// <summary>
@@ -71,12 +72,20 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
     public float HideWhenDistanceSquareToCameraIsGreaterThan = 360000;
 
     /// <summary>
-    /// Trail所支持的最大Section数量，默认情况下每个Section对应两个三角形。需要注意的是，这个条带系统为了提升效率，避免动态内存分配，所有的IndexBuffer和VertexBuffer都是提前分配的！而且每次渲染时都是渲染的所有三角型。FIXME: 渲染所有三角型完全是不得已，因为Unity的SetIndices只接收一个数组作为参数，而不是数组+数量这个只能希望Unity未来能够提供这种接口来解决这个问题了。
+    /// Trail所支持的最大Section数量，默认情况下每个Section对应两个三角形。需要注意的是，这个条带系统为了提升效率，避免动态内存分配，所有的IndexBuffer和VertexBuffer都是提前分配的！而且每次渲染时都是渲染的所有三角型
+    /// FIXME 渲染所有三角型完全是不得已，因为Unity的SetIndices只接收一个数组作为参数，而不是数组+数量这个只能希望Unity未来能够提供这种接口来解决这个问题了
     /// </summary>
     public int MaxTrailSectionCount = 32;
 
     /// <summary>
+    /// 是否在Awake时自动开始Trail
+    /// </summary>
+    public bool TrailAutomatically = true;
+
+    /// <summary>
+    /// ection数量其实是<see cref="MaxTrailSectionCount"/> - 1
     /// 子类可以重载UpdateSections方法来更新Sections
+    /// TODO 自己实现一个CachedList以优化效率
     /// </summary>
     protected List<SectionT> m_Sections = new List<SectionT>();
 
@@ -97,81 +106,91 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
     /// </summary>
     protected int[] m_IndexBuffer;
 
+    /// <summary>
+    /// Mesh0和Mesh1用于双缓冲？不是很确定
+    /// </summary>
     private Mesh m_Mesh0;
     private Mesh m_Mesh1;
     private bool m_UsingMesh1;
+    /// <summary>
+    /// 当Trail没有Section时渲染这个空的Mesh
+    /// </summary>
     private Mesh m_DummyMesh;
 
+    #region 应该把Mesh相关的放到MeshRenderer里
+    /// <summary>
+    /// 这个类是条带的发射器，本地空间的
+    /// 渲染器是世界空间的
+    /// </summary>
     private GameObject m_TrailRendererGameObject;
     private MeshFilter m_MeshFilter;
     private MeshRenderer m_MeshRenderer;
-    private Transform m_Transform;
+    #endregion
 
     /// <summary>
-    /// 所以Pool中的Section数量其实是MaxTrailSectionCount-1
+    /// 是否正在发着Trail
+    /// TODO 用一个EmittingState的枚举来取代<see cref="m_IsEmitting"/>和<see cref="m_IsManualEmit"/>
     /// </summary>
-    private Stack<SectionT> m_SectionPool = new Stack<SectionT>();
-
-    private bool m_Emitting = true;
-    private bool m_ManualEmit = false;
-    private bool m_NewHead = true;
+    private bool m_IsEmitting = false;
+    /// <summary>
+    /// 为false时，会在LateUpdate中自动添加Section
+    /// 为true时，需要主动调用<see cref="ManualEmit"/>添加Section
+    /// </summary>
+    private bool m_IsManualEmit = false;
+    private bool m_NewHead = false;
 
     private float m_SqrDistanceToCamera;
 
+    private Vector3 m_PreviousPosition;
     private Quaternion m_PreviousRotation;
-
-    public bool IsStopEmittingAndNoSectionLeft()
-    {
-        return m_Sections.Count <= 2 && !m_Emitting && !m_ManualEmit;
-    }
 
     public void StartTrail()
     {
-        if (m_Emitting)
+        if (m_IsEmitting)
         {
             Debug.LogWarning(string.Format("The trail({0}) has already started", name));
             return;
         }
 
-        m_Emitting = true;
+        m_IsEmitting = true;
         m_NewHead = true;
     }
 
-    public bool IsTrailStarted()
+    public void StopTrail()
     {
-        return m_Emitting;
-    }
-
-    public void EndTrail()
-    {
-        if (!m_Emitting)
+        if (!m_IsEmitting)
         {
             Debug.LogWarning(string.Format("The trail({0}) has already ended", name));
             return;
         }
 
-        m_Emitting = false;
+        m_IsEmitting = false;
     }
 
     public void ClearTrail()
     {
-        while (m_Sections.Count > 0)
-        {
-            RemoveSection(m_Sections.Count - 1);
-        }
+        m_Sections.Clear();
         m_NewHead = true;
     }
 
-    public void SetManualEmitting(bool manual)
+    public bool IsEmitting()
     {
-        m_ManualEmit = manual;
+        return m_IsEmitting;
     }
 
+    public void SetManualEmit(bool manual)
+    {
+        m_IsManualEmit = manual;
+    }
+
+    /// <summary>
+    /// 在发射器当前位置添加Section
+    /// </summary>
     public void ManualEmit()
     {
-        if (m_ManualEmit && m_Emitting)
+        if (m_IsManualEmit && m_IsEmitting)
         {
-            TryAddSection(transform.position, transform.rotation);
+            TryAddSection(base.transform.position, base.transform.rotation);
         }
         else
         {
@@ -179,15 +198,10 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
         }
     }
 
-    public void UpdateMaterial()
-    {
-        m_MeshRenderer.sharedMaterial = TrailMateiral;
-    }
-
     /// <summary>
     /// 如果希望在发射新的条带段时，能够对这个新产生的段上的数据做一些特殊处理（例如随机颜色），或者对自己扩展的变量进行初始化赋值时，重载本方法。
     /// </summary>
-    protected virtual void SetupNewSection(Vector3 position, Quaternion rotation, ref SectionT newSection, bool newHead, int iPreviousSection)
+    protected void SetupNewSection(Vector3 position, Quaternion rotation, SectionT newSection, bool newHead, int iPreviousSection)
     {
         newSection.Position = position;
         newSection.BirthTime = Time.time;
@@ -199,14 +213,13 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
 
         newSection.TexcoordU = newHead
             ? 0
-            : (transform.position - m_Sections[iPreviousSection].Position).magnitude * WorldToTexcoordU + m_Sections[iPreviousSection].TexcoordU;
+            : (base.transform.position - m_Sections[iPreviousSection].Position).magnitude * WorldToTexcoordU + m_Sections[iPreviousSection].TexcoordU;
     }
-
 
     /// <summary>
     /// 用于更新条带段的属性。自定制的特殊动画、过渡等逻辑请写在这个方法的重载中。（见osPlaneTrail范例中如何实现的“自定制曲线的条带颜色变化”）
     /// </summary>
-    protected virtual void UpdateSections()
+    protected void UpdateSections()
     {
         RemoveOldSections();
 
@@ -245,20 +258,24 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
 				     1    2    3    4
 				     *----*----*----*
 			*/
-            RemoveSection(0, iLastOutdateSection + 1 == m_Sections.Count
+            m_Sections.RemoveRange(0, iLastOutdateSection + 1 == m_Sections.Count
                 ? m_Sections.Count // 所有的都过期了，我们可以彻底移除了
                 : iLastOutdateSection); // 只要不是全部过期了就保留一个过期的Section，避免断裂效果	
         }
     }
 
     /// <summary>
-    /// 用于将条带的Section转换为用于渲染的顶点、索引缓冲。有自定制的填充策略请写在这个方法的重载中。（例如可断裂的条带；更高性能的填充策略；定向Billboard等功能）
+    /// 用于将条带的Section转换为用于渲染的顶点、索引缓冲。
+    /// 可以重载这个方法实现特定的填充策略，例如：
+    ///     可断裂的条带
+    ///     更高性能的填充策略
+    ///     定向Billboard
     /// </summary>
-    protected virtual void UpdateBuffers(ref List<SectionT> sections)
+    protected void UpdateBuffers()
     {
-        for (int i = 0; i < sections.Count; i++)
+        for (int i = 0; i < m_Sections.Count; i++)
         {
-            SectionT iterSection = sections[i];
+            SectionT iterSection = m_Sections[i];
 
             // Generate vertices
             Vector3 vHalfWidth = iterSection.RightDirection * iterSection.HalfWidth;
@@ -273,9 +290,9 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
             m_UVBuffer[i * 4 + 1] = new Vector2(iterSection.TexcoordU, 1);
         }
 
-        for (int i = 0; i < sections.Count - 1; i++)
+        for (int i = 0; i < m_Sections.Count - 1; i++)
         {
-            SectionT iterSection = sections[i + 1];
+            SectionT iterSection = m_Sections[i + 1];
 
             m_PositionBuffer[i * 4 + 2] = m_PositionBuffer[i * 4 + iterSection.Connect * 4];
             m_PositionBuffer[i * 4 + 3] = m_PositionBuffer[i * 4 + iterSection.Connect * 5];
@@ -288,29 +305,10 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
         }
 
 
-        for (int i = (sections.Count - 1) * 4; i < m_PositionBuffer.Length; ++i)
+        for (int i = (m_Sections.Count - 1) * 4; i < m_PositionBuffer.Length; ++i)
         {
             m_PositionBuffer[i] = new Vector3(0, -100000.0f, 0);
         }
-    }
-
-    /// <summary>
-    /// 默认的计算bound方法。
-    /// </summary>
-    /// <returns></returns>
-    protected virtual Bounds RecaculateBound()
-    {
-        Bounds bound = new Bounds(m_Transform.position, Vector3.zero);
-        if (m_Sections.Count > 0)
-        {
-            // 这种计算方式更适合处理一直朝某方向飞的条带，但不适合所有情况。。。
-            // TODO: 考虑改造为使用头部、中间、尾部三个Section计算Bounds
-            SectionT centerSection = m_Sections[m_Sections.Count / 2];
-            SectionT lastSection = m_Sections[m_Sections.Count - 1];
-            bound.Encapsulate(centerSection.Position);
-            bound.Encapsulate(lastSection.Position);
-        }
-        return bound;
     }
 
     protected SectionT TryAddSection(Vector3 position, Quaternion rotation)
@@ -323,11 +321,8 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
 
         m_NewHead |= m_Sections.Count == 0;
 
-        SectionT newSection;
-
-        // FIXME: 这里可以进一步优化，封装一个CachedList专门做这种事情，就不用一个单独的State来Pop和Push了 [12/26/2013 ShenYuan]
-        newSection = m_SectionPool.Pop();
-        SetupNewSection(position, rotation, ref newSection, m_NewHead, m_Sections.Count - 1);
+        SectionT newSection = new SectionT();
+        SetupNewSection(position, rotation, newSection, m_NewHead, m_Sections.Count - 1);
         m_Sections.Add(newSection);
 
         m_NewHead = false;
@@ -335,158 +330,168 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
         return newSection;
     }
 
-    protected void RemoveSection(int index)
+    /// <summary>
+    /// 计算Trail世界空间的包围球
+    /// 如果当前没有Section，则返回中心为发射器的位置，大小为0的Bounds
+    /// TODO 优化计算方式，降低计算频率
+    ///     这种计算方式更适合处理一直朝某方向飞的条带
+    ///     遍历所有的Section计算Bounds太废了，又不可能实现通用且高效的算法
+    ///     考虑让子类重载，根据不同情况去优化计算
+    /// </summary>
+    protected Bounds CaculateBounds()
     {
-        // FIXME: 这里可以进一步优化，封装一个CachedList专门做这种事情，就不用一个单独的State来Pop和Push了 [12/26/2013 ShenYuan]
-        m_SectionPool.Push(m_Sections[index]);
-        m_Sections.RemoveAt(index);
-    }
-
-    protected void RemoveSection(int index, int length)
-    {
-        // FIXME: 这里可以进一步优化，封装一个CachedList专门做这种事情，就不用一个单独的State来Pop和Push了 [12/26/2013 ShenYuan]
-        for (int i = index; i < index + length; ++i)
+        Bounds bounds = new Bounds(transform.position, Vector3.zero);
+        if (m_Sections.Count > 0)
         {
-            m_SectionPool.Push(m_Sections[i]);
+            SectionT centerSection = m_Sections[m_Sections.Count / 2];
+            SectionT lastSection = m_Sections[m_Sections.Count - 1];
+            bounds.Encapsulate(centerSection.Position);
+            bounds.Encapsulate(lastSection.Position);
         }
-        m_Sections.RemoveRange(index, length);
+        return bounds;
     }
 
+    protected void UpdateAutoEmitting()
+    {
+        if (!m_IsEmitting
+            || m_IsManualEmit)
+        {
+            return;
+        }
+        
+        if (AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan < m_SqrDistanceToCamera
+            || (AutoEmitStopWhenOutOfCamera
+                && !IsInRendererCamera(transform.position)))
+        {
+            // 不满足发射条件，当前帧不发射。且下次需要发射时开始一个新条带
+            m_NewHead = true;
+            return;
+        }
+
+        if (m_Sections.Count == 0)
+        {
+            // 在发射器上一帧的位置添加一个Section
+            TryAddSection(m_PreviousPosition, m_PreviousRotation);
+            // 在发射器当前位置添加一个Section作为HeadSection
+            TryAddSection(transform.position, transform.rotation);
+        }
+
+        // 将Head Section的属性设置为初始状态（Normalized Age 为1），并将Position和Rotation设置为同当前发射器一致
+        SectionT headSection = m_Sections[m_Sections.Count - 1];
+        int iNextToHead = m_Sections.Count < 2 ? 0 : m_Sections.Count - 2;
+        Vector3 headDirection = transform.position - m_Sections[iNextToHead].Position;
+        //位置设置成 m_Transform.position + headDirection*.01f， 为的是不让head和次head两个section重合。
+        //否则，两个section位置重合，导致计算出的左右展开vector长度为0。-- yuenze 2014-10-28 15:26:31
+        SetupNewSection(transform.position - headDirection * .01f, transform.rotation, headSection,
+            headSection.Connect == 0, iNextToHead);
+
+        float minVertexDisntanceSqr = AutoEmitMinVertexDistanceSquare;
+        float rendererCameraHalfTanFOV = Mathf.Tan(RendererCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+
+        float sqrDisntaceRelativeMinVertex = rendererCameraHalfTanFOV *
+                                             AutoEmitMinVertexDistanceRelativeHeight;
+        sqrDisntaceRelativeMinVertex *= sqrDisntaceRelativeMinVertex;
+        sqrDisntaceRelativeMinVertex *= m_SqrDistanceToCamera;
+
+        minVertexDisntanceSqr = Mathf.Max(minVertexDisntanceSqr, sqrDisntaceRelativeMinVertex);
+
+        float vetexDistanceSq = (headDirection).sqrMagnitude;
+        if (vetexDistanceSq > minVertexDisntanceSqr)
+        {
+            TryAddSection(transform.position, transform.rotation);
+        }
+    }
+
+    #region Unity Event
     protected void Awake()
     {
-        // 所以Pool中的Section数量其实是MaxTrailSectionCount-1
-        for (int i = 0; i < MaxTrailSectionCount - 1; i++)
-        {
-            m_SectionPool.Push(new SectionT());
-        }
-
         m_TrailRendererGameObject = new GameObject("(TrailRenderer)" + name);
         m_MeshFilter = m_TrailRendererGameObject.AddComponent<MeshFilter>();
-        m_Mesh0 = new Mesh();
-        m_Mesh0.MarkDynamic();
-        m_Mesh1 = new Mesh();
-        m_Mesh1.MarkDynamic();
-        m_UsingMesh1 = true;
-        m_DummyMesh = new Mesh();
-        // m_DummyMesh.vertices = new Vector3[1]{ Vector3.zero };
-        // m_DummyMesh.SetIndices(new int[1]{0}, MeshTopology.Points, 0);
-        m_MeshFilter.mesh = m_DummyMesh;
-
         m_MeshRenderer = m_TrailRendererGameObject.AddComponent<MeshRenderer>();
-        m_MeshRenderer.sharedMaterial = TrailMateiral;
-        hwmTrail3DMeshRenderer onWillRenderMessageSender = m_TrailRendererGameObject.AddComponent<hwmTrail3DMeshRenderer>();
-        onWillRenderMessageSender.OnTrailMeshWillRender += OnTrailMeshWillRender;
+        m_TrailRendererGameObject.AddComponent<hwmTrailMeshRenderer>().OnTrailMeshWillRender += OnTrailMeshWillRender;
 
+        #region Create Buffers
+        // TODO 这里应该可以优化，减少Buffer数量
+        // 魔法数字4: 一个Section是一个长方形Mesh，一个长方形4个顶点
         m_PositionBuffer = new Vector3[MaxTrailSectionCount * 4];
-        m_Mesh0.vertices = m_PositionBuffer;
-        m_Mesh1.vertices = m_PositionBuffer;
         m_ColorBuffer = new Color32[MaxTrailSectionCount * 4];
         m_UVBuffer = new Vector2[MaxTrailSectionCount * 4];
-
         m_IndexBuffer = new int[(MaxTrailSectionCount - 1) * 6];
-        for (int i = 0; i < MaxTrailSectionCount - 1; i++)
+        for (int iIndex = 0; iIndex < MaxTrailSectionCount - 1; iIndex++)
         {
-            m_IndexBuffer[i * 6] = i * 4;
-            m_IndexBuffer[i * 6 + 1] = i * 4 + 1;
-            m_IndexBuffer[i * 6 + 2] = i * 4 + 2;
+            m_IndexBuffer[iIndex * 6] = iIndex * 4;
+            m_IndexBuffer[iIndex * 6 + 1] = iIndex * 4 + 1;
+            m_IndexBuffer[iIndex * 6 + 2] = iIndex * 4 + 2;
 
-            m_IndexBuffer[i * 6 + 3] = i * 4 + 2;
-            m_IndexBuffer[i * 6 + 4] = i * 4 + 1;
-            m_IndexBuffer[i * 6 + 5] = i * 4 + 3;
+            m_IndexBuffer[iIndex * 6 + 3] = iIndex * 4 + 2;
+            m_IndexBuffer[iIndex * 6 + 4] = iIndex * 4 + 1;
+            m_IndexBuffer[iIndex * 6 + 5] = iIndex * 4 + 3;
         }
-        m_Mesh0.triangles = m_IndexBuffer;
-        m_Mesh1.triangles = m_IndexBuffer;
+        #endregion
 
-        m_Transform = transform;
+        // Mesh要放在Create Buffer后面
+        m_Mesh0 = CreateDefaultMesh();
+        m_Mesh1 = CreateDefaultMesh();
+        m_DummyMesh = new Mesh();
+
+        m_MeshFilter.mesh = m_DummyMesh;
+        m_MeshRenderer.sharedMaterial = TrailMateiral;
+
+        if (TrailAutomatically)
+        {
+            StartTrail();
+        }
+    }
+
+    protected void OnDestroy()
+    {
+        m_TrailRendererGameObject.GetComponent<hwmTrailMeshRenderer>().OnTrailMeshWillRender -= OnTrailMeshWillRender;
+        m_MeshRenderer = null;
+        m_MeshFilter = null;
+        Destroy(m_TrailRendererGameObject);
+        m_TrailRendererGameObject = null;
     }
 
     protected void LateUpdate()
     {
-        m_SqrDistanceToCamera = (RendererCamera.transform.position - m_Transform.position).sqrMagnitude;
+        #region Check need display trail
+        bool needDisplay;
+        if (RendererCamera == null)
+        {
+            needDisplay = false;
+        }
+        else
+        {
+            m_SqrDistanceToCamera = (RendererCamera.transform.position - transform.position).sqrMagnitude;
+            needDisplay = m_SqrDistanceToCamera < HideWhenDistanceSquareToCameraIsGreaterThan;
+        }
+        #endregion
 
-        bool hide = m_SqrDistanceToCamera > HideWhenDistanceSquareToCameraIsGreaterThan;
-        if (hide)
+        if (needDisplay)
+        {
+            if (!m_MeshRenderer.enabled)
+            {
+                m_MeshRenderer.enabled = true;
+            }
+        }
+        else
         {
             m_MeshRenderer.enabled = false;
             ClearTrail();
             return;
         }
-        else if (!m_MeshRenderer.enabled)
-        {
-            m_MeshRenderer.enabled = true;
-        }
 
-        if (!m_ManualEmit && m_Emitting)
-        {
-            if (AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan < m_SqrDistanceToCamera
-                || (AutoEmitStopWhenOutOfCamera && !IsInRendererCamera(m_Transform.position)))
-            {
-                // 这次不发射，而且下回如果有人发射的话还是一个新开始的条带
-                m_NewHead = true;
-            }
-            else
-            {
-                if (m_Sections.Count == 0)
-                {
-                    // 在发射器上一帧的位置添加一个Section
-                    //					TryAddSection(m_PreviousPosition, m_PreviousRotation);
-                    //TODO 这里暂时这么写，等加了US的事件之后再改回去。改成上面这样。
-                    TryAddSection(m_Transform.position, m_PreviousRotation);
-
-                    // 在发射器当前位置添加一个Section作为HeadSection
-                    TryAddSection(m_Transform.position, m_Transform.rotation);
-                }
-
-                // 将Head Section的属性设置为初始状态（Normalized Age 为1），并将Position和Rotation设置为同当前发射器一致
-                SectionT headSection = m_Sections[m_Sections.Count - 1];
-                int iNextToHead = m_Sections.Count < 2 ? 0 : m_Sections.Count - 2;
-                Vector3 headDirection = m_Transform.position - m_Sections[iNextToHead].Position;
-                //位置设置成 m_Transform.position + headDirection*.01f， 为的是不让head和次head两个section重合。
-                //否则，两个section位置重合，导致计算出的左右展开vector长度为0。-- yuenze 2014-10-28 15:26:31
-                SetupNewSection(m_Transform.position - headDirection * .01f, m_Transform.rotation, ref headSection,
-                    headSection.Connect == 0, iNextToHead);
-
-                float minVertexDisntanceSqr = AutoEmitMinVertexDistanceSquare;
-                float rendererCameraHalfTanFOV = Mathf.Tan(RendererCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
-
-                float sqrDisntaceRelativeMinVertex = rendererCameraHalfTanFOV *
-                                                     AutoEmitMinVertexDistanceRelativeHeight;
-                sqrDisntaceRelativeMinVertex *= sqrDisntaceRelativeMinVertex;
-                sqrDisntaceRelativeMinVertex *= m_SqrDistanceToCamera;
-
-                minVertexDisntanceSqr = Mathf.Max(minVertexDisntanceSqr, sqrDisntaceRelativeMinVertex);
-
-                float vetexDistanceSq = (headDirection).sqrMagnitude;
-                if (vetexDistanceSq > minVertexDisntanceSqr)
-                {
-                    TryAddSection(m_Transform.position, m_Transform.rotation);
-                }
-            }
-        }
-
+        UpdateAutoEmitting();
         UpdateSections();
 
-        // TODO: 这里可以降低更新频率，或者使用一个固定尺寸、跟随发射器移动的包围球来替代每帧计算
-        // 世界空间的包围球
-        Bounds bound = RecaculateBound();
+        Bounds bound = CaculateBounds();
 
         m_Mesh0.bounds = bound;
         m_Mesh1.bounds = bound;
         m_DummyMesh.bounds = bound;
 
-        m_PreviousRotation = m_Transform.rotation;
-        m_Transform.hasChanged = false;
-    }
-
-    private bool IsInRendererCamera(Vector3 worldPosition)
-    {
-        Vector3 viewPosition = RendererCamera.WorldToViewportPoint(worldPosition);
-        return viewPosition.x > 0 && viewPosition.x < 1 && viewPosition.y > 0 && viewPosition.y < 1 && viewPosition.z > 0;
-    }
-
-    protected void OnDestroy()
-    {
-        Destroy(m_TrailRendererGameObject);
+        m_PreviousPosition = transform.position;
+        m_PreviousRotation = transform.rotation;
     }
 
     protected void OnDisable()
@@ -501,16 +506,40 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
     protected void OnEnable()
     {
         // 但是条带系统启动时是不需要手动启动Renderer的，因为Update中会做这件事情
+        //m_MeshRenderer.enabled = true;
+
+        m_PreviousPosition = transform.position;
         m_PreviousRotation = transform.rotation;
     }
 
+    protected void OnTrailMeshWillRender()
+    {
+        Mesh fillMesh;
+        if (m_Sections.Count > 1)
+        {
+            UpdateBuffers();
+            
+            m_UsingMesh1 = !m_UsingMesh1;
+            fillMesh = m_UsingMesh1 ? m_Mesh1 : m_Mesh0;
+            fillMesh.vertices = m_PositionBuffer;
+            fillMesh.colors32 = m_ColorBuffer;
+            fillMesh.uv = m_UVBuffer;
+        }
+        else
+        {
+            fillMesh = m_DummyMesh;
+        }
+        m_MeshFilter.mesh = fillMesh;
+    }
+
 #if UNITY_EDITOR
-    private void OnDrawGizmosSelected()
+    protected void OnDrawGizmosSelected()
     {
         if (!Application.isPlaying)
         {
             return;
         }
+
         GUIStyle guiStyle = new GUIStyle();
         guiStyle.fontSize = 15;
         guiStyle.normal.textColor = Color.green;
@@ -530,7 +559,6 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
             float radius = Mathf.Lerp(StartHalfWidth, EndHalfWidth, section.NormalizedAge);
             Gizmos.DrawWireSphere(section.Position, radius);
             UnityEditor.Handles.Label(section.Position, (i).ToString(), guiStyle);
-
         }
 
         for (int i = 0; i < m_PositionBuffer.Length; i++)
@@ -543,31 +571,28 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
                 Gizmos.color = Color.yellow;
                 Gizmos.DrawLine(start, end);
 
-                //				Vector3 dir = (end - start).normalized;
-
                 if (i % 4 == 0)
                 {
                     Gizmos.color = Color.green;
                     guiStyle.normal.textColor = Color.green;
-                    //Gizmos.DrawSphere(start, 0.05f);
-                    //					UnityEditor.Handles.Label(start + Vector3.right*.2f, i.ToString(), guiStyle);
+                    Gizmos.DrawSphere(start, 0.05f);
+                    UnityEditor.Handles.Label(start + Vector3.right * .2f, i.ToString(), guiStyle);
                     Gizmos.color = Color.red;
                     guiStyle.normal.textColor = Color.red;
-                    //Gizmos.DrawSphere(end, 0.05f);
-                    //					UnityEditor.Handles.Label(end - Vector3.right * .2f, (i + 1).ToString(), guiStyle); 
+                    Gizmos.DrawSphere(end, 0.05f);
+                    UnityEditor.Handles.Label(end - Vector3.right * .2f, (i + 1).ToString(), guiStyle);
                 }
                 else
                 {
                     Gizmos.color = Color.green;
                     guiStyle.normal.textColor = Color.green;
-                    //Gizmos.DrawSphere(start, 0.05f);
-                    //					UnityEditor.Handles.Label(start + Vector3.right * .2f + Vector3.forward * .2f, i.ToString(), guiStyle);
+                    Gizmos.DrawSphere(start, 0.05f);
+                    UnityEditor.Handles.Label(start + Vector3.right * .2f + Vector3.forward * .2f, i.ToString(), guiStyle);
                     Gizmos.color = Color.red;
                     guiStyle.normal.textColor = Color.red;
-                    //Gizmos.DrawSphere(end, 0.05f);
-                    //					UnityEditor.Handles.Label(end - Vector3.right * .2f + Vector3.forward * .2f, (i + 1).ToString(), guiStyle); 
+                    Gizmos.DrawSphere(end, 0.05f);
+                    UnityEditor.Handles.Label(end - Vector3.right * .2f + Vector3.forward * .2f, (i + 1).ToString(), guiStyle);
                 }
-
             }
         }
         Bounds bounds = m_MeshRenderer.bounds;
@@ -575,26 +600,29 @@ public class hwmTrail3DGeneric<SectionT> : MonoBehaviour where SectionT : hwmTra
         Gizmos.DrawWireSphere(bounds.center, bounds.extents.magnitude);
     }
 #endif
+    #endregion
 
-    private void OnTrailMeshWillRender()
+    private bool IsInRendererCamera(Vector3 worldPosition)
     {
-        // TODO: 对于非Billboard的条带，每帧只最多需要填充一次 [12/25/2013 ShenYuan]
-        m_UsingMesh1 = !m_UsingMesh1;
-
-        if (m_Sections.Count >= 2)
+        if (RendererCamera)
         {
-            UpdateBuffers(ref m_Sections);
-
-            Mesh fillMesh = m_UsingMesh1 ? m_Mesh1 : m_Mesh0;
-            fillMesh.vertices = m_PositionBuffer;
-            fillMesh.colors32 = m_ColorBuffer;
-            fillMesh.uv = m_UVBuffer;
-
-            m_MeshFilter.mesh = fillMesh;
+            Vector3 viewPosition = RendererCamera.WorldToViewportPoint(worldPosition);
+            return viewPosition.x > 0 && viewPosition.x < 1 && viewPosition.y > 0 && viewPosition.y < 1 && viewPosition.z > 0;
         }
         else
         {
-            m_MeshFilter.mesh = m_DummyMesh;
+            return false;
         }
+    }
+
+    private Mesh CreateDefaultMesh()
+    {
+        Mesh mesh = new Mesh();
+        mesh.MarkDynamic();
+        mesh.vertices = m_PositionBuffer;
+        mesh.colors32 = m_ColorBuffer;
+        mesh.uv = m_UVBuffer;
+        mesh.triangles = m_IndexBuffer;
+        return mesh;
     }
 }

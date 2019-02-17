@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-public class hwmTrail3DMeshRenderer : MonoBehaviour
+public class hwmTrailMeshRenderer : MonoBehaviour
 {
     public delegate void OnTrailMeshWillRenderDelegate();
     public OnTrailMeshWillRenderDelegate OnTrailMeshWillRender = null;

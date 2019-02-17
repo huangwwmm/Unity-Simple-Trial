@@ -187,6 +187,7 @@ GameObject:
   m_Component:
   - component: {fileID: 711975816}
   - component: {fileID: 711975815}
+  - component: {fileID: 711975817}
   m_Layer: 0
   m_Name: Trail3D
   m_TagString: Untagged
@@ -214,12 +215,13 @@ MonoBehaviour:
   StartColor: {r: 1, g: 1, b: 1, a: 1}
   EndColor: {r: 1, g: 1, b: 1, a: 1}
   AutoEmitMinVertexDistanceSquare: 0.01
-  AutoEmitMinVertexDistanceRelativeHeight: 0.07
+  AutoEmitMinVertexDistanceRelativeHeight: 0
   AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan: 250000
   AutoEmitStopWhenOutOfCamera: 1
   HideWhenDistanceSquareToCameraIsGreaterThan: 360000
-  MaxTrailSectionCount: 32
-  Speed: {x: 100, y: 0, z: 0}
+  MaxTrailSectionCount: 250
+  TrailAutomatically: 1
+  Speed: {x: 0, y: 0, z: 2}
 --- !u!4 &711975816
 Transform:
   m_ObjectHideFlags: 0
@@ -235,6 +237,20 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 1
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!111 &711975817
+Animation:
+  m_ObjectHideFlags: 0
+  m_PrefabParentObject: {fileID: 0}
+  m_PrefabInternal: {fileID: 0}
+  m_GameObject: {fileID: 711975814}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Animation: {fileID: 0}
+  m_Animations: []
+  m_WrapMode: 0
+  m_PlayAutomatically: 1
+  m_AnimatePhysics: 0
+  m_CullingType: 0
 --- !u!1 &995508761
 GameObject:
   m_ObjectHideFlags: 0
@@ -310,7 +326,7 @@ Transform:
   m_PrefabInternal: {fileID: 0}
   m_GameObject: {fileID: 995508761}
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -10}
+  m_LocalPosition: {x: -5.3, y: 2, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 711975816}
@@ -342,7 +358,7 @@ Transform:
   m_GameObject: {fileID: 2073329357}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.1, y: 0.1, z: 0.1}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 711975816}
   m_RootOrder: 1
