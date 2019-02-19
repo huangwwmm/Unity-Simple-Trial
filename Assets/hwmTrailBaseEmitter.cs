@@ -4,7 +4,7 @@ using System.Collections.Generic;
 /// <summary>
 /// TODO 这个类应该是个abstract类，由子类实现各种效果的Trail
 /// </summary>
-public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmTrailSection, new()
+public class hwmTrailBaseEmitter : MonoBehaviour
 {
 #if UNITY_EDITOR
     [Header("Debug")]
@@ -92,7 +92,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// 子类可以重载UpdateSections方法来更新Sections
     /// TODO 自己实现一个CachedList以优化效率
     /// </summary>
-    protected List<SectionT> m_Sections = new List<SectionT>();
+    protected List<hwmTrailSection> m_Sections = new List<hwmTrailSection>();
 
     /// <summary>
     /// 子类可以重载UpdateBuffers方法实现自己的填充函数
@@ -202,7 +202,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// <summary>
     /// 如果希望在发射新的条带段时，能够对这个新产生的段上的数据做一些特殊处理（例如随机颜色），或者对自己扩展的变量进行初始化赋值时，重载本方法
     /// </summary>
-    protected void SetupSection(SectionT section, Vector3 position, Quaternion rotation, int previousSectionIndex)
+    protected void SetupSection(hwmTrailSection section, Vector3 position, Quaternion rotation, int previousSectionIndex)
     {
         bool isHeadSection = previousSectionIndex < 0;
 
@@ -225,7 +225,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     {
         for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            SectionT currentSection = m_Sections[iSection];
+            hwmTrailSection currentSection = m_Sections[iSection];
 
             currentSection.NormalizedAge = Mathf.Clamp01((Time.time - currentSection.BirthTime) / LifeTime);
             currentSection.Color = Color.Lerp(StartColor, EndColor, currentSection.NormalizedAge);
@@ -239,7 +239,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         float minLiveBirthTime = Time.time - LifeTime;
         for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            SectionT iterSection = m_Sections[iSection];
+            hwmTrailSection iterSection = m_Sections[iSection];
             if (iterSection.BirthTime > minLiveBirthTime)
             {
                 lastDeadSectionIndex = iSection - 1;
@@ -270,7 +270,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// <summary>
     /// 当前Section数量超过<see cref="MaxSectionCount"/>时不会添加Section
     /// </summary>
-    protected SectionT TryAddSection(Vector3 position, Quaternion rotation)
+    protected hwmTrailSection TryAddSection(Vector3 position, Quaternion rotation)
     {
         // TODO 不能添加Section会导致条带发射器终止发射，暂时的解决方法是把MaxSectionCount配的很大。预计以后顶点数可以动态改变
         if (m_Sections.Count == MaxSectionCount - 1)
@@ -278,7 +278,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
             return null;
         }
 
-        SectionT newSection = new SectionT();
+        hwmTrailSection newSection = new hwmTrailSection();
         m_Sections.Add(newSection);
         SetupSection(newSection, position, rotation, m_Sections.Count - 2);
 
@@ -297,7 +297,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         // UNDONE 这里有点蒙蔽啊。懒得看了，直接问祝锐把
         for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            SectionT iterSection = m_Sections[iSection];
+            hwmTrailSection iterSection = m_Sections[iSection];
 
             // Generate vertices
             Vector3 vHalfWidth = iterSection.RightDirection * iterSection.HalfWidth;
@@ -314,7 +314,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
 
         for (int iSection = 0; iSection < m_Sections.Count - 1; iSection++)
         {
-            SectionT iterSection = m_Sections[iSection + 1];
+            hwmTrailSection iterSection = m_Sections[iSection + 1];
             // TODO 就这里不懂，找祝锐
             m_PositionBuffer[iSection * 4 + 2] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 4];
             m_PositionBuffer[iSection * 4 + 3] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 5];
@@ -347,8 +347,8 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         Bounds bounds = new Bounds(transform.position, Vector3.zero);
         if (m_Sections.Count > 0)
         {
-            SectionT centerSection = m_Sections[m_Sections.Count / 2];
-            SectionT lastSection = m_Sections[m_Sections.Count - 1];
+            hwmTrailSection centerSection = m_Sections[m_Sections.Count / 2];
+            hwmTrailSection lastSection = m_Sections[m_Sections.Count - 1];
             bounds.Encapsulate(centerSection.Position);
             bounds.Encapsulate(lastSection.Position);
         }
@@ -397,7 +397,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
             else
             {
                 // 将HeadSection挪到发射器的位置
-                SectionT headSection = m_Sections[m_Sections.Count - 1];
+                hwmTrailSection headSection = m_Sections[m_Sections.Count - 1];
                 SetupSection(headSection, transform.position, transform.rotation, m_Sections.Count - 2);
             }
         }
@@ -538,7 +538,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
 
         for (int i = 0; i < m_Sections.Count; ++i)
         {
-            SectionT section = m_Sections[i];
+            hwmTrailSection section = m_Sections[i];
             if (section.Connect == 1)
             {
                 Gizmos.color = new Color(1.0f, 1.0f, 1.0f, 0.5f);
