@@ -4,8 +4,12 @@ using System.Collections.Generic;
 /// <summary>
 /// TODO 这个类应该是个abstract类，由子类实现各种效果的Trail
 /// </summary>
-public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTrailSection, new()
+public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmTrailSection, new()
 {
+#if UNITY_EDITOR
+    public bool DEBUG_DrawGizmos = true;
+#endif
+
     /// <summary>
     /// 渲染这个Trail的相机
     /// </summary>
@@ -107,6 +111,12 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
     protected int[] m_IndexBuffer;
 
     /// <summary>
+    /// 这个类是条带的发射器，本地空间的
+    /// 渲染器是世界空间的
+    /// </summary>
+    protected hwmTrailMeshRenderer m_TrailRenderer;
+
+    /// <summary>
     /// Mesh0和Mesh1用于双缓冲？不是很确定
     /// </summary>
     private Mesh m_Mesh0;
@@ -116,16 +126,6 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
     /// 当Trail没有Section时渲染这个空的Mesh
     /// </summary>
     private Mesh m_DummyMesh;
-
-    #region 应该把Mesh相关的放到MeshRenderer里
-    /// <summary>
-    /// 这个类是条带的发射器，本地空间的
-    /// 渲染器是世界空间的
-    /// </summary>
-    private GameObject m_TrailRendererGameObject;
-    private MeshFilter m_MeshFilter;
-    private MeshRenderer m_MeshRenderer;
-    #endregion
 
     /// <summary>
     /// 是否正在发着Trail
@@ -358,7 +358,7 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
         {
             return;
         }
-        
+
         if (AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan < m_SqrDistanceToCamera
             || (AutoEmitStopWhenOutOfCamera
                 && !IsInRendererCamera(transform.position)))
@@ -405,10 +405,8 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
     #region Unity Event
     protected void Awake()
     {
-        m_TrailRendererGameObject = new GameObject("(TrailRenderer)" + name);
-        m_MeshFilter = m_TrailRendererGameObject.AddComponent<MeshFilter>();
-        m_MeshRenderer = m_TrailRendererGameObject.AddComponent<MeshRenderer>();
-        m_TrailRendererGameObject.AddComponent<hwmTrailMeshRenderer>().OnTrailMeshWillRender += OnTrailMeshWillRender;
+        m_TrailRenderer = new GameObject("(TrailRenderer)" + name).AddComponent<hwmTrailMeshRenderer>();
+        m_TrailRenderer.OnTrailMeshWillRender += OnTrailMeshWillRender;
 
         #region Create Buffers
         // TODO 这里应该可以优化，减少Buffer数量
@@ -434,8 +432,8 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
         m_Mesh1 = CreateDefaultMesh();
         m_DummyMesh = new Mesh();
 
-        m_MeshFilter.mesh = m_DummyMesh;
-        m_MeshRenderer.sharedMaterial = TrailMateiral;
+        m_TrailRenderer._MeshFilter.mesh = m_DummyMesh;
+        m_TrailRenderer._MeshRenderer.sharedMaterial = TrailMateiral;
 
         if (TrailAutomatically)
         {
@@ -445,11 +443,9 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
 
     protected void OnDestroy()
     {
-        m_TrailRendererGameObject.GetComponent<hwmTrailMeshRenderer>().OnTrailMeshWillRender -= OnTrailMeshWillRender;
-        m_MeshRenderer = null;
-        m_MeshFilter = null;
-        Destroy(m_TrailRendererGameObject);
-        m_TrailRendererGameObject = null;
+        m_TrailRenderer.OnTrailMeshWillRender -= OnTrailMeshWillRender;
+        Destroy(m_TrailRenderer.gameObject);
+        m_TrailRenderer = null;
     }
 
     protected void LateUpdate()
@@ -467,16 +463,9 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
         }
         #endregion
 
-        if (needDisplay)
+        m_TrailRenderer.SetRendererEnable(needDisplay);
+        if (!needDisplay)
         {
-            if (!m_MeshRenderer.enabled)
-            {
-                m_MeshRenderer.enabled = true;
-            }
-        }
-        else
-        {
-            m_MeshRenderer.enabled = false;
             ClearTrail();
             return;
         }
@@ -497,10 +486,7 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
     protected void OnDisable()
     {
         // 条带系统停止时要同时停止Renderer
-        if (m_MeshRenderer) // 如果MeshRenderer先销毁（例如退出场景时），这里会为null
-        {
-            m_MeshRenderer.enabled = false;
-        }
+        m_TrailRenderer.SetRendererEnable(false);
     }
 
     protected void OnEnable()
@@ -518,7 +504,7 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
         if (m_Sections.Count > 1)
         {
             UpdateBuffers();
-            
+
             m_UsingMesh1 = !m_UsingMesh1;
             fillMesh = m_UsingMesh1 ? m_Mesh1 : m_Mesh0;
             fillMesh.vertices = m_PositionBuffer;
@@ -529,13 +515,13 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
         {
             fillMesh = m_DummyMesh;
         }
-        m_MeshFilter.mesh = fillMesh;
+        m_TrailRenderer._MeshFilter.mesh = fillMesh;
     }
 
 #if UNITY_EDITOR
     protected void OnDrawGizmosSelected()
     {
-        if (!Application.isPlaying)
+        if (!Application.isPlaying || !DEBUG_DrawGizmos)
         {
             return;
         }
@@ -595,7 +581,7 @@ public class hwmTrailBaseEmiter<SectionT> : MonoBehaviour where SectionT : hwmTr
                 }
             }
         }
-        Bounds bounds = m_MeshRenderer.bounds;
+        Bounds bounds = m_TrailRenderer._MeshRenderer.bounds;
         Gizmos.color = Color.white;
         Gizmos.DrawWireSphere(bounds.center, bounds.extents.magnitude);
     }

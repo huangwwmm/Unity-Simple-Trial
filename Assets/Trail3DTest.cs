@@ -1,6 +1,6 @@
 ﻿using UnityEngine;
 
-public class Trail3DTest : hwmTrailBaseEmiter<hwmTrailSection>
+public class Trail3DTest : hwmTrailBaseEmitter<hwmTrailSection>
 {
     public Vector3 Speed;
 
