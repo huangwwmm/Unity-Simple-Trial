@@ -7,6 +7,7 @@ using System.Collections.Generic;
 public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmTrailSection, new()
 {
 #if UNITY_EDITOR
+    [Header("Debug")]
     public bool DEBUG_DrawGizmos = true;
 #endif
 
@@ -51,43 +52,43 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     public Color EndColor = new Color(1, 1, 1, 0);
 
     /// <summary>
-    /// 自动发射Section模式下。两个Section之间的最少间距，条带发射器同上一个条带Section的间距的平方如果小于这个数值的话，条带系统不会创建新的Section，而是移动头部Section的位置到发射点。
+    /// 当条带发射器到相机距离的平方小于此值时条带系统工作，大于此值时清除条带
     /// </summary>
-    public float AutoEmitMinVertexDistanceSquare = 0.01f;
-
-    /// <summary>
-    /// 自动发射Section模式下，条带发射器移动距离必须超过以下屏幕上的尺寸才会显示。这个数值是屏幕高的单位化数值，也就是说当这个值为1时，代表发射器必须走过屏幕底部移到顶部这么大的距离时才会创建新的Section
-    /// </summary>
-    public float AutoEmitMinVertexDistanceRelativeHeight = 1.0f;
-
-    /// <summary>
-    /// 当条带发射器距离相机超过以下距离时，条带停止发射
-    /// </summary>
-    public float AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan = 250000;
-
-    /// <summary>
-    /// 当条带发射器处于屏幕外时停止发射条带？
-    /// </summary>
-    public bool AutoEmitStopWhenOutOfCamera = true;
-
-    /// <summary>
-    /// 当条带发射器距离相机大于此值时条带系统彻底停止工作
-    /// </summary>
-    public float HideWhenDistanceSquareToCameraIsGreaterThan = 360000;
+    public float DisplayWhenMe2CameraDistanceSqrLessThan = 360000;
 
     /// <summary>
     /// Trail所支持的最大Section数量，默认情况下每个Section对应两个三角形。需要注意的是，这个条带系统为了提升效率，避免动态内存分配，所有的IndexBuffer和VertexBuffer都是提前分配的！而且每次渲染时都是渲染的所有三角型
     /// FIXME 渲染所有三角型完全是不得已，因为Unity的SetIndices只接收一个数组作为参数，而不是数组+数量这个只能希望Unity未来能够提供这种接口来解决这个问题了
     /// </summary>
-    public int MaxTrailSectionCount = 32;
+    public int MaxSectionCount = 32;
 
     /// <summary>
     /// 是否在Awake时自动开始Trail
     /// </summary>
     public bool TrailAutomatically = true;
 
+    [Header("Auto Emitting")]
     /// <summary>
-    /// ection数量其实是<see cref="MaxTrailSectionCount"/> - 1
+    /// 条带发射器在世界空间中移动的距离的平方超过这个值时会发射新的Section，否则会把HeadSection挪到发射器位置
+    /// 同时满足<see cref="AutoEmittingAddSectionWhenMeMoveDistanceSqrInWorldSpcaeGreaterThen"/>和<see cref="AutoEmittingAddSectionWhenMeMoveDistanceInScreenSpaceGreaterThen"/>时才会发射新的Section
+    /// </summary>
+    public float AutoEmittingAddSectionWhenMeMoveDistanceSqrInWorldSpcaeGreaterThen = 0.01f;
+    /// <summary>
+    /// 条带发射器在屏幕上移动的距离除以屏幕高度超过这个值时会发射新的Section，否则会把HeadSection挪到发射器位置
+    /// </summary>
+    public float AutoEmittingAddSectionWhenMeMoveDistanceInScreenSpaceGreaterThen = 1.0f;
+    /// <summary>
+    /// 当条带发射器到相机距离的平方小于此值时，会自动发射条带
+    /// </summary>
+    public float AutoEmittingWhenMe2CameraDistanceSqrIsLessThan = 250000;
+    /// <summary>
+    /// 当条带发射器处于屏幕外是否自动发射条带
+    /// </summary>
+    public bool EnableAutoEmittingWhenMeOutOfCamera = true;
+
+
+    /// <summary>
+    /// Section数量其实是<see cref="MaxSectionCount"/> - 1
     /// 子类可以重载UpdateSections方法来更新Sections
     /// TODO 自己实现一个CachedList以优化效率
     /// </summary>
@@ -137,9 +138,11 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// 为true时，需要主动调用<see cref="ManualEmit"/>添加Section
     /// </summary>
     private bool m_IsManualEmit = false;
-    private bool m_NewHead = false;
 
-    private float m_SqrDistanceToCamera;
+    /// <summary>
+    /// 发射器到相机距离的平方
+    /// </summary>
+    private float m_Me2CameraDistanceSqr;
 
     private Vector3 m_PreviousPosition;
     private Quaternion m_PreviousRotation;
@@ -153,7 +156,6 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         }
 
         m_IsEmitting = true;
-        m_NewHead = true;
     }
 
     public void StopTrail()
@@ -170,7 +172,6 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     public void ClearTrail()
     {
         m_Sections.Clear();
-        m_NewHead = true;
     }
 
     public bool IsEmitting()
@@ -199,21 +200,22 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     }
 
     /// <summary>
-    /// 如果希望在发射新的条带段时，能够对这个新产生的段上的数据做一些特殊处理（例如随机颜色），或者对自己扩展的变量进行初始化赋值时，重载本方法。
+    /// 如果希望在发射新的条带段时，能够对这个新产生的段上的数据做一些特殊处理（例如随机颜色），或者对自己扩展的变量进行初始化赋值时，重载本方法
     /// </summary>
-    protected void SetupNewSection(Vector3 position, Quaternion rotation, SectionT newSection, bool newHead, int iPreviousSection)
+    protected void SetupSection(SectionT section, Vector3 position, Quaternion rotation, int previousSectionIndex)
     {
-        newSection.Position = position;
-        newSection.BirthTime = Time.time;
-        newSection.RightDirection = rotation * Vector3.right;
-        newSection.NormalizedAge = 0;
-        newSection.HalfWidth = StartHalfWidth;
-        newSection.Color = StartColor;
-        newSection.Connect = newHead ? 0 : 1;
+        bool isHeadSection = previousSectionIndex < 0;
 
-        newSection.TexcoordU = newHead
+        section.Position = position;
+        section.BirthTime = Time.time;
+        section.RightDirection = rotation * Vector3.right;
+        section.NormalizedAge = 0;
+        section.HalfWidth = StartHalfWidth;
+        section.Color = StartColor;
+        section.Connect = isHeadSection ? 0 : 1;
+        section.TexcoordU = isHeadSection
             ? 0
-            : (base.transform.position - m_Sections[iPreviousSection].Position).magnitude * WorldToTexcoordU + m_Sections[iPreviousSection].TexcoordU;
+            : (transform.position - m_Sections[previousSectionIndex].Position).magnitude * WorldToTexcoordU + m_Sections[previousSectionIndex].TexcoordU;
     }
 
     /// <summary>
@@ -221,11 +223,9 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// </summary>
     protected void UpdateSections()
     {
-        RemoveOldSections();
-
-        for (int i = 0; i < m_Sections.Count; i++)
+        for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            SectionT currentSection = m_Sections[i];
+            SectionT currentSection = m_Sections[iSection];
 
             currentSection.NormalizedAge = Mathf.Clamp01((Time.time - currentSection.BirthTime) / LifeTime);
             currentSection.Color = Color.Lerp(StartColor, EndColor, currentSection.NormalizedAge);
@@ -233,18 +233,21 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         }
     }
 
-    protected void RemoveOldSections()
+    protected void UpdateRemoveDeadSections()
     {
-        // Remove old sections
-        int iLastOutdateSection = -1;
-        float minBirthTime = Time.time - LifeTime;
-        while (iLastOutdateSection + 1 < m_Sections.Count
-               && m_Sections[iLastOutdateSection + 1].BirthTime < minBirthTime) // 满足这个条件说明这个Section过期了
+        int lastDeadSectionIndex = -1;
+        float minLiveBirthTime = Time.time - LifeTime;
+        for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            ++iLastOutdateSection;
+            SectionT iterSection = m_Sections[iSection];
+            if (iterSection.BirthTime > minLiveBirthTime)
+            {
+                lastDeadSectionIndex = iSection - 1;
+                break;
+            }
         }
 
-        if (iLastOutdateSection > -1) // 说明有过期的Section
+        if (lastDeadSectionIndex > -1) // 说明有过期的Section
         {
             /* 断裂效果说明：例
 				下图第一行是Section Index 第二行中"*"是Section "----"是画出来的Trail
@@ -258,14 +261,32 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
 				     1    2    3    4
 				     *----*----*----*
 			*/
-            m_Sections.RemoveRange(0, iLastOutdateSection + 1 == m_Sections.Count
+            m_Sections.RemoveRange(0, lastDeadSectionIndex + 1 == m_Sections.Count
                 ? m_Sections.Count // 所有的都过期了，我们可以彻底移除了
-                : iLastOutdateSection); // 只要不是全部过期了就保留一个过期的Section，避免断裂效果	
+                : lastDeadSectionIndex); // 只要不是全部过期了就保留一个过期的Section，避免断裂效果	
         }
     }
 
     /// <summary>
-    /// 用于将条带的Section转换为用于渲染的顶点、索引缓冲。
+    /// 当前Section数量超过<see cref="MaxSectionCount"/>时不会添加Section
+    /// </summary>
+    protected SectionT TryAddSection(Vector3 position, Quaternion rotation)
+    {
+        // TODO 不能添加Section会导致条带发射器终止发射，暂时的解决方法是把MaxSectionCount配的很大。预计以后顶点数可以动态改变
+        if (m_Sections.Count == MaxSectionCount - 1)
+        {
+            return null;
+        }
+
+        SectionT newSection = new SectionT();
+        m_Sections.Add(newSection);
+        SetupSection(newSection, position, rotation, m_Sections.Count - 2);
+
+        return newSection;
+    }
+
+    /// <summary> 
+    /// 用于将条带的Section转换为用于渲染的顶点、索引缓冲
     /// 可以重载这个方法实现特定的填充策略，例如：
     ///     可断裂的条带
     ///     更高性能的填充策略
@@ -273,61 +294,44 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
     /// </summary>
     protected void UpdateBuffers()
     {
-        for (int i = 0; i < m_Sections.Count; i++)
+        // UNDONE 这里有点蒙蔽啊。懒得看了，直接问祝锐把
+        for (int iSection = 0; iSection < m_Sections.Count; iSection++)
         {
-            SectionT iterSection = m_Sections[i];
+            SectionT iterSection = m_Sections[iSection];
 
             // Generate vertices
             Vector3 vHalfWidth = iterSection.RightDirection * iterSection.HalfWidth;
 
-            m_PositionBuffer[i * 4 + 0] = iterSection.Position - vHalfWidth;
-            m_PositionBuffer[i * 4 + 1] = iterSection.Position + vHalfWidth;
+            m_PositionBuffer[iSection * 4 + 0] = iterSection.Position - vHalfWidth;
+            m_PositionBuffer[iSection * 4 + 1] = iterSection.Position + vHalfWidth;
             // fade colors out over time
-            m_ColorBuffer[i * 4 + 0] = iterSection.Color;
-            m_ColorBuffer[i * 4 + 1] = iterSection.Color;
+            m_ColorBuffer[iSection * 4 + 0] = iterSection.Color;
+            m_ColorBuffer[iSection * 4 + 1] = iterSection.Color;
 
-            m_UVBuffer[i * 4 + 0] = new Vector2(iterSection.TexcoordU, 0);
-            m_UVBuffer[i * 4 + 1] = new Vector2(iterSection.TexcoordU, 1);
+            m_UVBuffer[iSection * 4 + 0] = new Vector2(iterSection.TexcoordU, 0);
+            m_UVBuffer[iSection * 4 + 1] = new Vector2(iterSection.TexcoordU, 1);
         }
 
-        for (int i = 0; i < m_Sections.Count - 1; i++)
+        for (int iSection = 0; iSection < m_Sections.Count - 1; iSection++)
         {
-            SectionT iterSection = m_Sections[i + 1];
-
-            m_PositionBuffer[i * 4 + 2] = m_PositionBuffer[i * 4 + iterSection.Connect * 4];
-            m_PositionBuffer[i * 4 + 3] = m_PositionBuffer[i * 4 + iterSection.Connect * 5];
+            SectionT iterSection = m_Sections[iSection + 1];
+            // TODO 就这里不懂，找祝锐
+            m_PositionBuffer[iSection * 4 + 2] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 4];
+            m_PositionBuffer[iSection * 4 + 3] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 5];
             // fade colors out over time
-            m_ColorBuffer[i * 4 + 2] = m_ColorBuffer[i * 4 + 4];
-            m_ColorBuffer[i * 4 + 3] = m_ColorBuffer[i * 4 + 5];
+            m_ColorBuffer[iSection * 4 + 2] = m_ColorBuffer[iSection * 4 + 4];
+            m_ColorBuffer[iSection * 4 + 3] = m_ColorBuffer[iSection * 4 + 5];
 
-            m_UVBuffer[i * 4 + 2] = m_UVBuffer[i * 4 + 4];
-            m_UVBuffer[i * 4 + 3] = m_UVBuffer[i * 4 + 5];
+            m_UVBuffer[iSection * 4 + 2] = m_UVBuffer[iSection * 4 + 4];
+            m_UVBuffer[iSection * 4 + 3] = m_UVBuffer[iSection * 4 + 5];
         }
 
 
-        for (int i = (m_Sections.Count - 1) * 4; i < m_PositionBuffer.Length; ++i)
+        for (int iSection = (m_Sections.Count - 1) * 4; iSection < m_PositionBuffer.Length; ++iSection)
         {
-            m_PositionBuffer[i] = new Vector3(0, -100000.0f, 0);
+            // TODO 这里也不懂。这样为什么不会渲染出从最后一个Section到这个位置的Trail？是被裁剪掉了么。不是会把一个三角形切开，然后渲染在屏幕中的部分么。为什么全裁掉了
+            m_PositionBuffer[iSection] = new Vector3(0, -100000.0f, 0);
         }
-    }
-
-    protected SectionT TryAddSection(Vector3 position, Quaternion rotation)
-    {
-        // 我们预留了一个Section时刻作为条带的头部
-        if (m_Sections.Count == MaxTrailSectionCount - 1)
-        {
-            return null;
-        }
-
-        m_NewHead |= m_Sections.Count == 0;
-
-        SectionT newSection = new SectionT();
-        SetupNewSection(position, rotation, newSection, m_NewHead, m_Sections.Count - 1);
-        m_Sections.Add(newSection);
-
-        m_NewHead = false;
-
-        return newSection;
     }
 
     /// <summary>
@@ -359,12 +363,10 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
             return;
         }
 
-        if (AutoEmitStopWhenDistanceSquareToCameraIsGreaterThan < m_SqrDistanceToCamera
-            || (AutoEmitStopWhenOutOfCamera
-                && !IsInRendererCamera(transform.position)))
+        if (!(m_Me2CameraDistanceSqr < AutoEmittingWhenMe2CameraDistanceSqrIsLessThan
+            && (EnableAutoEmittingWhenMeOutOfCamera
+                || IsInRendererCamera(transform.position))))
         {
-            // 不满足发射条件，当前帧不发射。且下次需要发射时开始一个新条带
-            m_NewHead = true;
             return;
         }
 
@@ -372,33 +374,32 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         {
             // 在发射器上一帧的位置添加一个Section
             TryAddSection(m_PreviousPosition, m_PreviousRotation);
-            // 在发射器当前位置添加一个Section作为HeadSection
+            // 在发射器当前位置添加一个Section作为HeadSection,
             TryAddSection(transform.position, transform.rotation);
         }
-
-        // 将Head Section的属性设置为初始状态（Normalized Age 为1），并将Position和Rotation设置为同当前发射器一致
-        SectionT headSection = m_Sections[m_Sections.Count - 1];
-        int iNextToHead = m_Sections.Count < 2 ? 0 : m_Sections.Count - 2;
-        Vector3 headDirection = transform.position - m_Sections[iNextToHead].Position;
-        //位置设置成 m_Transform.position + headDirection*.01f， 为的是不让head和次head两个section重合。
-        //否则，两个section位置重合，导致计算出的左右展开vector长度为0。-- yuenze 2014-10-28 15:26:31
-        SetupNewSection(transform.position - headDirection * .01f, transform.rotation, headSection,
-            headSection.Connect == 0, iNextToHead);
-
-        float minVertexDisntanceSqr = AutoEmitMinVertexDistanceSquare;
-        float rendererCameraHalfTanFOV = Mathf.Tan(RendererCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
-
-        float sqrDisntaceRelativeMinVertex = rendererCameraHalfTanFOV *
-                                             AutoEmitMinVertexDistanceRelativeHeight;
-        sqrDisntaceRelativeMinVertex *= sqrDisntaceRelativeMinVertex;
-        sqrDisntaceRelativeMinVertex *= m_SqrDistanceToCamera;
-
-        minVertexDisntanceSqr = Mathf.Max(minVertexDisntanceSqr, sqrDisntaceRelativeMinVertex);
-
-        float vetexDistanceSq = (headDirection).sqrMagnitude;
-        if (vetexDistanceSq > minVertexDisntanceSqr)
+        else
         {
-            TryAddSection(transform.position, transform.rotation);
+            #region 判断是否需要新的Section
+            // TDOO 如果FOV不经常变动，可以把这个结果Cache下来。或者把这个值放在相机的管理中每帧计算
+            float cameraHalfTanFOV = Mathf.Tan(RendererCamera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            // 把需要发射新Section的发射器在屏幕上移动的距离换算成世界空间的距离
+            float minMeMoveDistanceSqr = cameraHalfTanFOV * AutoEmittingAddSectionWhenMeMoveDistanceInScreenSpaceGreaterThen;
+            minMeMoveDistanceSqr *= minMeMoveDistanceSqr;
+            minMeMoveDistanceSqr *= m_Me2CameraDistanceSqr;
+            // 需要同时满足世界空间距离和屏幕空间距离
+            minMeMoveDistanceSqr = Mathf.Max(AutoEmittingAddSectionWhenMeMoveDistanceSqrInWorldSpcaeGreaterThen, minMeMoveDistanceSqr);
+            bool needAddSection = (transform.position - m_Sections[m_Sections.Count - 2].Position).sqrMagnitude > minMeMoveDistanceSqr;
+            #endregion
+            if (needAddSection)
+            {
+                TryAddSection(transform.position, transform.rotation);
+            }
+            else
+            {
+                // 将HeadSection挪到发射器的位置
+                SectionT headSection = m_Sections[m_Sections.Count - 1];
+                SetupSection(headSection, transform.position, transform.rotation, m_Sections.Count - 2);
+            }
         }
     }
 
@@ -411,11 +412,11 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         #region Create Buffers
         // TODO 这里应该可以优化，减少Buffer数量
         // 魔法数字4: 一个Section是一个长方形Mesh，一个长方形4个顶点
-        m_PositionBuffer = new Vector3[MaxTrailSectionCount * 4];
-        m_ColorBuffer = new Color32[MaxTrailSectionCount * 4];
-        m_UVBuffer = new Vector2[MaxTrailSectionCount * 4];
-        m_IndexBuffer = new int[(MaxTrailSectionCount - 1) * 6];
-        for (int iIndex = 0; iIndex < MaxTrailSectionCount - 1; iIndex++)
+        m_PositionBuffer = new Vector3[MaxSectionCount * 4];
+        m_ColorBuffer = new Color32[MaxSectionCount * 4];
+        m_UVBuffer = new Vector2[MaxSectionCount * 4];
+        m_IndexBuffer = new int[(MaxSectionCount - 1) * 6];
+        for (int iIndex = 0; iIndex < MaxSectionCount - 1; iIndex++)
         {
             m_IndexBuffer[iIndex * 6] = iIndex * 4;
             m_IndexBuffer[iIndex * 6 + 1] = iIndex * 4 + 1;
@@ -443,9 +444,13 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
 
     protected void OnDestroy()
     {
-        m_TrailRenderer.OnTrailMeshWillRender -= OnTrailMeshWillRender;
-        Destroy(m_TrailRenderer.gameObject);
-        m_TrailRenderer = null;
+        // 已知在Editor下结束游戏时m_TrailRenderer可能为null
+        if (m_TrailRenderer != null)
+        {
+            m_TrailRenderer.OnTrailMeshWillRender -= OnTrailMeshWillRender;
+            Destroy(m_TrailRenderer.gameObject);
+            m_TrailRenderer = null;
+        }
     }
 
     protected void LateUpdate()
@@ -458,8 +463,8 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         }
         else
         {
-            m_SqrDistanceToCamera = (RendererCamera.transform.position - transform.position).sqrMagnitude;
-            needDisplay = m_SqrDistanceToCamera < HideWhenDistanceSquareToCameraIsGreaterThan;
+            m_Me2CameraDistanceSqr = (RendererCamera.transform.position - transform.position).sqrMagnitude;
+            needDisplay = m_Me2CameraDistanceSqr < DisplayWhenMe2CameraDistanceSqrLessThan;
         }
         #endregion
 
@@ -471,6 +476,7 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         }
 
         UpdateAutoEmitting();
+        UpdateRemoveDeadSections();
         UpdateSections();
 
         Bounds bound = CaculateBounds();
@@ -584,6 +590,11 @@ public class hwmTrailBaseEmitter<SectionT> : MonoBehaviour where SectionT : hwmT
         Bounds bounds = m_TrailRenderer._MeshRenderer.bounds;
         Gizmos.color = Color.white;
         Gizmos.DrawWireSphere(bounds.center, bounds.extents.magnitude);
+    }
+
+    protected void OnGUI()
+    {
+        GUILayout.Box(m_Sections.Count.ToString());
     }
 #endif
     #endregion

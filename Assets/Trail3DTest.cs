@@ -2,10 +2,12 @@
 
 public class Trail3DTest : hwmTrailBaseEmitter<hwmTrailSection>
 {
-    public Vector3 Speed;
+    public float MoveSpeed;
+    public Vector3 RotateSpeed;
 
     protected void Update()
     {
-        transform.position += Speed * Time.deltaTime;
+        transform.eulerAngles += RotateSpeed * Time.deltaTime;
+        transform.position += transform.forward * MoveSpeed * Time.deltaTime;
     }
 }
