@@ -15,22 +15,20 @@ public class Trail3DTest : MonoBehaviour
     [ContextMenu("T")]
     private void DEBUG_Test()
     {
-        m_TrailRenderer.transform.rotation *= Quaternion.Inverse(transform.rotation);
-        m_TrailRenderer.transform.position -= (Quaternion.Inverse(transform.rotation) * transform.position);
+        Vector3 emitter2RendererDir = transform.position - m_TrailRenderer.transform.position;
+        Quaternion inverseEmitterRotation = Quaternion.Inverse(transform.rotation);
+        m_TrailRenderer.transform.rotation *= inverseEmitterRotation;
+        m_TrailRenderer.transform.position += emitter2RendererDir - inverseEmitterRotation * emitter2RendererDir - transform.position;
 
         transform.position = Vector3.zero;
         transform.rotation = Quaternion.identity;
     }
-
 
     /// <summary>
     /// 如果希望在发射新的条带段时，能够对这个新产生的段上的数据做一些特殊处理（例如随机颜色），或者对自己扩展的变量进行初始化赋值时，重载本方法
     /// </summary>
     protected void SetupSection(hwmTrailSection section, Vector3 position, Quaternion rotation, int previousSectionIndex)
     {
-        position = Quaternion.Inverse(m_TrailRenderer.transform.rotation) * (position - m_TrailRenderer.transform.position);
-        rotation *= m_TrailRenderer.transform.rotation;
-
         bool isHeadSection = previousSectionIndex < 0;
 
         section.Position = position;
@@ -39,10 +37,9 @@ public class Trail3DTest : MonoBehaviour
         section.NormalizedAge = 0;
         section.HalfWidth = StartHalfWidth;
         section.Color = StartColor;
-        section.Connect = isHeadSection ? 0 : 1;
         section.TexcoordU = isHeadSection
             ? 0
-            : (transform.position - m_Sections[previousSectionIndex].Position).magnitude * WorldToTexcoordU + m_Sections[previousSectionIndex].TexcoordU;
+            : (position - m_Sections[previousSectionIndex].Position).magnitude * WorldToTexcoordU + m_Sections[previousSectionIndex].TexcoordU;
     }
 
 #if UNITY_EDITOR
@@ -182,9 +179,6 @@ public class Trail3DTest : MonoBehaviour
     /// 发射器到相机距离的平方
     /// </summary>
     private float m_Me2CameraDistanceSqr;
-
-    private Vector3 m_PreviousPosition;
-    private Quaternion m_PreviousRotation;
 
     public void StartTrail()
     {
@@ -337,8 +331,8 @@ public class Trail3DTest : MonoBehaviour
         {
             hwmTrailSection iterSection = m_Sections[iSection + 1];
             // TODO 就这里不懂，找祝锐
-            m_PositionBuffer[iSection * 4 + 2] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 4];
-            m_PositionBuffer[iSection * 4 + 3] = m_PositionBuffer[iSection * 4 + iterSection.Connect * 5];
+            m_PositionBuffer[iSection * 4 + 2] = m_PositionBuffer[iSection * 4 + Mathf.Min(iSection , 1) * 4];
+            m_PositionBuffer[iSection * 4 + 3] = m_PositionBuffer[iSection * 4 + Mathf.Min(iSection, 1) * 5];
             // fade colors out over time
             m_ColorBuffer[iSection * 4 + 2] = m_ColorBuffer[iSection * 4 + 4];
             m_ColorBuffer[iSection * 4 + 3] = m_ColorBuffer[iSection * 4 + 5];
@@ -391,12 +385,14 @@ public class Trail3DTest : MonoBehaviour
             return;
         }
 
+        Vector3 emitterPosition_RendererSpace = Quaternion.Inverse(m_TrailRenderer.transform.rotation) * (transform.position - m_TrailRenderer.transform.position);
+        Quaternion emitterRotation_RendererSpace = transform.rotation * Quaternion.Inverse(m_TrailRenderer.transform.rotation);
         if (m_Sections.Count == 0)
         {
             // 在发射器上一帧的位置添加一个Section
-            TryAddSection(m_PreviousPosition, m_PreviousRotation);
+            TryAddSection(emitterPosition_RendererSpace, emitterRotation_RendererSpace);
             // 在发射器当前位置添加一个Section作为HeadSection,
-            TryAddSection(transform.position, transform.rotation);
+            TryAddSection(emitterPosition_RendererSpace, emitterRotation_RendererSpace);
         }
         else
         {
@@ -413,13 +409,13 @@ public class Trail3DTest : MonoBehaviour
             #endregion
             if (needAddSection)
             {
-                TryAddSection(transform.position, transform.rotation);
+                TryAddSection(emitterPosition_RendererSpace, emitterRotation_RendererSpace);
             }
             else
             {
                 // 将HeadSection挪到发射器的位置
                 hwmTrailSection headSection = m_Sections[m_Sections.Count - 1];
-                SetupSection(headSection, transform.position, transform.rotation, m_Sections.Count - 2);
+                SetupSection(headSection, emitterPosition_RendererSpace, emitterRotation_RendererSpace, m_Sections.Count - 2);
             }
         }
     }
@@ -505,9 +501,6 @@ public class Trail3DTest : MonoBehaviour
         m_Mesh0.bounds = bound;
         m_Mesh1.bounds = bound;
         m_DummyMesh.bounds = bound;
-
-        m_PreviousPosition = transform.position;
-        m_PreviousRotation = transform.rotation;
     }
 
     protected void OnDisable()
@@ -520,9 +513,6 @@ public class Trail3DTest : MonoBehaviour
     {
         // 但是条带系统启动时是不需要手动启动Renderer的，因为Update中会做这件事情
         //m_MeshRenderer.enabled = true;
-
-        m_PreviousPosition = transform.position;
-        m_PreviousRotation = transform.rotation;
     }
 
     protected void OnTrailMeshWillRender()
@@ -557,21 +547,15 @@ public class Trail3DTest : MonoBehaviour
         guiStyle.fontSize = 15;
         guiStyle.normal.textColor = Color.green;
 
-        for (int i = 0; i < m_Sections.Count; ++i)
+        for (int iSection = 0; iSection < m_Sections.Count; ++iSection)
         {
-            hwmTrailSection section = m_Sections[i];
-            if (section.Connect == 1)
-            {
-                Gizmos.color = new Color(1.0f, 1.0f, 1.0f, 0.5f);
-            }
-            else
-            {
-                Gizmos.color = new Color(1.0f, 0, 0, 0.5f);
-            }
-
-            float radius = Mathf.Lerp(StartHalfWidth, EndHalfWidth, section.NormalizedAge);
-            Gizmos.DrawWireSphere(section.Position, radius);
-            UnityEditor.Handles.Label(section.Position, (i).ToString(), guiStyle);
+            hwmTrailSection iterSection = m_Sections[iSection];
+            Gizmos.color = iSection == 0
+                ? new Color(1.0f, 0, 0, 0.5f)
+                : new Color(1.0f, 1.0f, 1.0f, 0.5f);
+            float radius = Mathf.Lerp(StartHalfWidth, EndHalfWidth, iterSection.NormalizedAge);
+            Gizmos.DrawWireSphere(iterSection.Position, radius);
+            UnityEditor.Handles.Label(iterSection.Position, (iSection).ToString(), guiStyle);
         }
 
         for (int i = 0; i < m_PositionBuffer.Length; i++)
@@ -613,10 +597,6 @@ public class Trail3DTest : MonoBehaviour
         Gizmos.DrawWireSphere(bounds.center, bounds.extents.magnitude);
     }
 
-    protected void OnGUI()
-    {
-        GUILayout.Box(m_Sections.Count.ToString());
-    }
 #endif
     #endregion
 
