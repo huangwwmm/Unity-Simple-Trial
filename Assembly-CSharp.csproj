@@ -66,6 +66,7 @@
     <Compile Include="Assets\hwmTrailSection.cs" />
     <Compile Include="Assets\SpacecraftTrailEmitter.cs" />
     <Compile Include="Assets\Trail3DTest.cs" />
+    <None Include="Assets\Trail_Test.shader" />
     <None Include="Assets\Particles_AlphaBlend_NoFog.shader" />
     <Reference Include="UnityEditor.StandardEvents">
       <HintPath>D:/Work/Unity/Unity-Simple-Trial/Library/ScriptAssemblies/UnityEditor.StandardEvents.dll</HintPath>

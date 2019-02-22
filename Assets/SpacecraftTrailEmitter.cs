@@ -94,7 +94,6 @@ public class SpacecraftTrailEmitter : MonoBehaviour
     private Color32[] m_ColorBuffer;
     private Vector2[] m_UVBuffer;
     private int[] m_IndexBuffer;
-    private Vector3[] m_NormalsBuffer;
 
     /// <summary>
     /// 这个类是条带的发射器，本地空间的
@@ -183,7 +182,6 @@ public class SpacecraftTrailEmitter : MonoBehaviour
         m_ColorBuffer = new Color32[MaxSectionCount * 4];
         m_UVBuffer = new Vector2[MaxSectionCount * 4];
         m_IndexBuffer = new int[(MaxSectionCount - 1) * 6];
-        m_NormalsBuffer = new Vector3[MaxSectionCount * 4];
         for (int iIndex = 0; iIndex < MaxSectionCount - 1; iIndex++)
         {
             m_IndexBuffer[iIndex * 6] = iIndex * 4;
@@ -284,7 +282,6 @@ public class SpacecraftTrailEmitter : MonoBehaviour
             fillMesh.vertices = m_PositionBuffer;
             fillMesh.colors32 = m_ColorBuffer;
             fillMesh.uv = m_UVBuffer;
-            fillMesh.normals = m_NormalsBuffer;
         }
         else
         {
@@ -309,7 +306,6 @@ public class SpacecraftTrailEmitter : MonoBehaviour
         {
             TrailSection iterSection = m_Sections[iSection];
             Gizmos.color = Color.red;
-            Gizmos.DrawLine(iterSection.Position, iterSection.Position + iterSection.Normals);
         }
 
         for (int iPosition = 0; iPosition < m_PositionBuffer.Length; iPosition++)
@@ -435,9 +431,7 @@ public class SpacecraftTrailEmitter : MonoBehaviour
             : (position - m_Sections[previousSectionIndex].Position).magnitude;
 
         section.Position = position;
-        section.RightDirection = rotation * Vector3.right;
         section.HalfWidth = StartHalfWidth;
-        section.Normals = rotation * Vector3.up;
     }
 
     /// <summary> 
@@ -449,12 +443,13 @@ public class SpacecraftTrailEmitter : MonoBehaviour
     /// </summary>
     private void UpdateBuffers()
     {
-        for (int iSection = 0; iSection < m_Sections.Count; iSection++)
+        Vector3 cameraForward = RendererCamera.transform.forward;
+        for (int iSection = 1; iSection < m_Sections.Count; iSection++)
         {
             TrailSection iterSection = m_Sections[iSection];
 
             // Generate vertices
-            Vector3 vHalfWidth = iterSection.RightDirection * iterSection.HalfWidth;
+            Vector3 vHalfWidth = Vector3.Cross((iterSection.Position - m_Sections[iSection - 1].Position).normalized, cameraForward).normalized * iterSection.HalfWidth;
 
             m_PositionBuffer[iSection * 4 + 0] = iterSection.Position - vHalfWidth;
             m_PositionBuffer[iSection * 4 + 1] = iterSection.Position + vHalfWidth;
@@ -464,9 +459,23 @@ public class SpacecraftTrailEmitter : MonoBehaviour
 
             m_UVBuffer[iSection * 4 + 0] = new Vector2(iterSection.TexcoordU, 0);
             m_UVBuffer[iSection * 4 + 1] = new Vector2(iterSection.TexcoordU, 1);
+        }
 
-            m_NormalsBuffer[iSection * 4 + 0] = iterSection.Normals;
-            m_NormalsBuffer[iSection * 4 + 1] = iterSection.Normals;
+        if (m_Sections.Count > 0)
+        {
+            int iSection = 0;
+            TrailSection iterSection = m_Sections[iSection];
+            // Generate vertices
+            Vector3 vHalfWidth = Vector3.Cross((iterSection.Position - m_Sections[iSection + 1].Position).normalized, RendererCamera.transform.forward).normalized * iterSection.HalfWidth;
+
+            m_PositionBuffer[iSection * 4 + 0] = iterSection.Position - vHalfWidth;
+            m_PositionBuffer[iSection * 4 + 1] = iterSection.Position + vHalfWidth;
+            // fade colors out over time
+            m_ColorBuffer[iSection * 4 + 0] = iterSection.Color;
+            m_ColorBuffer[iSection * 4 + 1] = iterSection.Color;
+
+            m_UVBuffer[iSection * 4 + 0] = new Vector2(iterSection.TexcoordU, 0);
+            m_UVBuffer[iSection * 4 + 1] = new Vector2(iterSection.TexcoordU, 1);
         }
 
         for (int iSection = 0; iSection < m_Sections.Count - 1; iSection++)
@@ -480,9 +489,6 @@ public class SpacecraftTrailEmitter : MonoBehaviour
 
             m_UVBuffer[iSection * 4 + 2] = m_UVBuffer[iSection * 4 + 4];
             m_UVBuffer[iSection * 4 + 3] = m_UVBuffer[iSection * 4 + 5];
-
-            m_NormalsBuffer[iSection * 4 + 2] = m_NormalsBuffer[iSection * 4 + 4];
-            m_NormalsBuffer[iSection * 4 + 3] = m_NormalsBuffer[iSection * 4 + 5];
         }
 
 
@@ -585,10 +591,8 @@ public class SpacecraftTrailEmitter : MonoBehaviour
     {
         public float LengthToPreviousSection;
         public Vector3 Position;
-        public Vector3 RightDirection;
         public float HalfWidth;
         public Color32 Color;
         public float TexcoordU;
-        public Vector3 Normals;
     }
 }
